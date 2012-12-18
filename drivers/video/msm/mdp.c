@@ -1788,6 +1788,7 @@ irqreturn_t mdp_isr(int irq, void *ptr)
 			if (dma->waiting) {
 				dma->waiting = FALSE;
 				complete(&dma->comp);
+				mgmt->mdp_is_hist_valid = FALSE;
 			}
 		}
 #ifndef CONFIG_FB_MSM_MDP22
