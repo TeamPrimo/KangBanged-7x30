@@ -158,7 +158,6 @@ static void headset_device_register(void);
 
 static unsigned int engineerid = 0;
 static unsigned int memory_size = 0;
-unsigned long msm_fb_base;
 
 unsigned int primoc_get_engineerid(void)
 {
@@ -2835,12 +2834,6 @@ static struct platform_device android_pmem_audio_device = {
        .dev = { .platform_data = &android_pmem_audio_pdata },
 };
 
-static struct resource msm_fb_resources[] = {
-	{
-		.flags  = IORESOURCE_DMA,
-	}
-};
-
 static struct platform_device msm_migrate_pages_device = {
 	.name   = "msm_migrate_pages",
 	.id     = -1,
@@ -5116,7 +5109,6 @@ static void __init primoc_allocate_memory_regions(void)
 	size = fb_size ? : MSM_FB_SIZE;
 	addr = alloc_bootmem_align(size, 0x1000);
 	msm_fb_resources[0].start = __pa(addr);
-	msm_fb_base = msm_fb_resources[0].start;
 	msm_fb_resources[0].end = msm_fb_resources[0].start + size - 1;
 	printk("allocating %lu bytes at %p (%lx physical) for fb\n",
 			size, addr, __pa(addr));
