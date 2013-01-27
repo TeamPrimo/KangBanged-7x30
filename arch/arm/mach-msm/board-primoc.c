@@ -2997,12 +2997,11 @@ static int __init check_dq_setup(char *str)
 __setup("androidboot.dq=", check_dq_setup);
 #endif
 
-#if defined(CONFIG_SERIAL_MSM_HS) || defined(CONFIG_SERIAL_MSM_HS_LPM)
+#if defined(CONFIG_SERIAL_MSM_HS)
 static struct msm_serial_hs_platform_data msm_uart_dm1_pdata = {
-        .rx_wakeup_irq = -1,
 	.inject_rx_on_wakeup = 0,
-
-#ifdef CONFIG_SERIAL_BCM_BT_LPM
+	.cpu_lock_supported = 1,
+#ifdef CONFIG_SERIAL_MSM_HS_PURE_ANDROID
 	.exit_lpm_cb = bcm_bt_lpm_exit_lpm_locked,
 #else
 	/* for bcm BT */
@@ -3012,7 +3011,7 @@ static struct msm_serial_hs_platform_data msm_uart_dm1_pdata = {
 #endif
 };
 
-#ifdef CONFIG_SERIAL_BCM_BT_LPM
+#ifdef CONFIG_SERIAL_MSM_HS_PURE_ANDROID
 static struct bcm_bt_lpm_platform_data bcm_bt_lpm_pdata = {
 	.gpio_wake = PRIMOC_GPIO_BT_WAKE,
 	.gpio_host_wake = PRIMOC_GPIO_BT_HOST_WAKE,
@@ -3422,10 +3421,10 @@ static struct platform_device *devices[] __initdata = {
 #ifdef CONFIG_ION_MSM
 	&ion_dev,
 #endif
-#ifdef CONFIG_SERIAL_BCM_BT_LPM
+#ifdef CONFIG_SERIAL_MSM_HS_PURE_ANDROID
        &primoc_bcm_bt_lpm_device,
 #endif
-#if defined(CONFIG_SERIAL_MSM_HS) || defined(CONFIG_SERIAL_MSM_HS_LPM)
+#ifdef CONFIG_SERIAL_MSM_HS
        &msm_device_uart_dm1,
 #endif
 #ifdef CONFIG_BT
