@@ -61,7 +61,7 @@ static DEFINE_PER_CPU(struct mutex, cpufreq_remove_mutex);
  */
 static struct cpufreq_driver *cpufreq_driver;
 static DEFINE_PER_CPU(struct cpufreq_policy *, cpufreq_cpu_data);
-#ifdef CONFIG_HOTPLUG_CPU
+#if defined (CONFIG_HOTPLUG_CPU) || (CONFIG_MACH_RUNNYMEDE)
 /* This one keeps track of the previously set governor of a removed CPU */
 struct cpufreq_cpu_save_data {
 	char gov[CPUFREQ_NAME_LEN];
