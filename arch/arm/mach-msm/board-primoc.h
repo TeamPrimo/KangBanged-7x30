@@ -75,6 +75,26 @@
 #define PRIMOC_LCD_RSTz		(126)
 #define PRIMOC_LCD_ID1		(128)
 #define PRIMOC_LCD_ID0		(129)
+#define PRIMOC_LCD_PCLK		(90)
+#define PRIMOC_LCD_DE		(91)
+#define PRIMOC_LCD_VSYNC	(92)
+#define PRIMOC_LCD_HSYNC	(93)
+#define PRIMOC_LCD_G2		(94)
+#define PRIMOC_LCD_G3		(95)
+#define PRIMOC_LCD_G4		(96)
+#define PRIMOC_LCD_G5		(97)
+#define PRIMOC_LCD_G6		(98)
+#define PRIMOC_LCD_G7		(99)
+#define PRIMOC_LCD_B3		(100)
+#define PRIMOC_LCD_B4		(101)
+#define PRIMOC_LCD_B5		(102)
+#define PRIMOC_LCD_B6		(103)
+#define PRIMOC_LCD_B7		(104)
+#define PRIMOC_LCD_R3		(105)
+#define PRIMOC_LCD_R4		(106)
+#define PRIMOC_LCD_R5		(107)
+#define PRIMOC_LCD_R6		(108)
+#define PRIMOC_LCD_R7		(109)
 
 #define PRIMOC_AUD_CODEC_EN	(36)
 #define PRIMOC_AUD_MICPATH_SEL	(127)
@@ -111,9 +131,6 @@
 
 /* 35mm Headset */
 #define PRIMOC_GPIO_35MM_HEADSET_DET	(26)
-
-/* EMMC */
-#define PRIMOC_GPIO_EMMC_RST		(88)
 
 /* Touch */
 #define PRIMOC_GPIO_TP_ATT_N		(20)
