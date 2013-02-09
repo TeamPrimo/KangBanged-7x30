@@ -64,7 +64,6 @@
 #define PRIMOU_LCD_RSTz		(126)
 #define PRIMOU_LCD_ID1			(128)
 #define PRIMOU_LCD_ID0			(129)
-/*
 #define PRIMOU_LCD_PCLK               (90)
 #define PRIMOU_LCD_DE                 (91)
 #define PRIMOU_LCD_VSYNC              (92)
@@ -85,7 +84,7 @@
 #define PRIMOU_LCD_R5                 (107)
 #define PRIMOU_LCD_R6                 (108)
 #define PRIMOU_LCD_R7                 (109)
-*/
+
 /* BT */
 #define PRIMOU_GPIO_BT_UART1_RTS      (134)
 #define PRIMOU_GPIO_BT_UART1_CTS      (135)
