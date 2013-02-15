@@ -121,10 +121,6 @@ static int panel_gpio_switch(int on)
 	return 0;
 }
 
-static inline int is_lg_panel(void){
-	return (panel_type == PANEL_ID_PRIMO_LG)? 1 : 0;
-}
-
 static int panel_init_power(void)
 {
 	int rc;
@@ -221,7 +217,7 @@ static struct msm_panel_common_pdata lcdc_panel_data = {
 };
 
 struct platform_device lcdc_primoc_lg_panel_device = {
-	.name   = "lcdc_primoc_lg",
+	.name   = "lcdc_primo_wvga",
 	.id     = 0,
 	.dev    = {
 		.platform_data = &lcdc_panel_data,
@@ -259,9 +255,6 @@ struct msm_list_device primoc_fb_devices[] = {
 
 int device_fb_detect_panel(const char *name)
 {
-	if (!strcmp(name, "lcdc_primoc_lg") && is_lg_panel()) {
-		return 0;
-	}
 	return 0;
 }
 
@@ -275,12 +268,8 @@ int __init primoc_init_panel(void)
 
 	msm_fb_add_devices(primoc_fb_devices, ARRAY_SIZE(primoc_fb_devices));
 
-	if (is_lg_panel()) {
-		ret = platform_device_register(&lcdc_primoc_lg_panel_device);
-		printk(KERN_ERR "%s is LG panel: %d\n", __func__, panel_type);
-	} else {
-		printk(KERN_ERR "%s: Panel not supported (but i dont know why) (%d)\n", __func__, panel_type);
-	}
+	ret = platform_device_register(&lcdc_primoc_lg_panel_device);
+	printk(KERN_ERR "%s is LG panel: %d\n", __func__, panel_type);
 
 	return ret;
 }
