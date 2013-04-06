@@ -1,6 +1,7 @@
 /* linux/arch/arm/mach-msm/board-primoc-panel.c
  *
  * Copyright (C) 2008 HTC Corporation.
+ * Author: Jay Tu <jay_tu@htc.com>
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -31,29 +32,28 @@
 #include <mach/msm_panel.h>
 #include <mach/panel_id.h>
 
+
 #include "../board-primoc.h"
 #include "../devices.h"
 #include "../proc_comm.h"
 #include "../../../../drivers/video/msm/mdp_hw.h"
 
+#if 1
 #define B(s...) printk(s)
+#else
+#define B(s...) do {} while (0)
+#endif
 #define LCM_GPIO_CFG(gpio, func) \
 PCOM_GPIO_CFG(gpio, func, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA)
-
 extern int panel_type;
-
-static struct vreg *V_LCMIO_1V8, *V_LCMIO_2V85;
-
-#define PWM_USER_DEF	 	142
-#define PWM_USER_MIN		30
-#define PWM_USER_DIM		9
-#define PWM_USER_MAX		255
-
-#define PWM_NOVATEK_DEF		135
-#define PWM_NOVATEK_MIN		7
-#define PWM_NOVATEK_MAX		255
-
-#define DEFAULT_BRIGHTNESS      PWM_USER_DEF
+struct vreg *V_LCMIO_1V8, *V_LCMIO_2V85;
+struct mddi_cmd {
+        unsigned char cmd;
+        unsigned delay;
+        unsigned char *vals;
+        unsigned len;
+};
+#define prm_size 20
 #define LCM_CMD(_cmd, _delay, ...)                              \
 {                                                               \
         .cmd = _cmd,                                            \
@@ -61,7 +61,15 @@ static struct vreg *V_LCMIO_1V8, *V_LCMIO_2V85;
         .vals = (u8 []){__VA_ARGS__},                           \
         .len = sizeof((u8 []){__VA_ARGS__}) / sizeof(u8)        \
 }
+#define DEFAULT_BRIGHTNESS 255
+#define PWM_USER_DEF	 		143
+#define PWM_USER_MIN			30
+#define PWM_USER_DIM			 9
+#define PWM_USER_MAX			255
 
+#define PWM_HITACHI_DEF			174
+#define PWM_HITACHI_MIN			 10
+#define PWM_HITACHI_MAX			255
 enum {
 	GATE_ON = 1 << 0,
 };
@@ -121,32 +129,42 @@ static int panel_gpio_switch(int on)
 	return 0;
 }
 
+static inline int is_lg_panel(void){
+	return (panel_type == PANEL_ID_PRIMO_LG)? 1 : 0;
+}
+static inline int is_hitachi_panel(void){
+	return (panel_type == PANEL_ID_SAG_HITACHI)? 1 : 0;
+}
+
 static int panel_init_power(void)
 {
-	int rc;
+  int rc;
 
-	V_LCMIO_1V8 = vreg_get(NULL, "lvsw0");
-	if (IS_ERR(V_LCMIO_1V8)) {
-		pr_err("%s: LCMIO_1V8 get failed (%ld)\n",
-			__func__, PTR_ERR(V_LCMIO_1V8));
-		return -1;
-	}
-
-	V_LCMIO_2V85 = vreg_get(NULL, "gp13");
-	if (IS_ERR(V_LCMIO_2V85)) {
-		pr_err("%s: LCMIO_2V85 get failed (%ld)\n",
-			__func__, PTR_ERR(V_LCMIO_2V85));
-		return -1;
-	}
-
-	rc = vreg_set_level(V_LCMIO_1V8, 1800);
-	if (rc) {
-		pr_err("%s: vreg LCMIO_1V8 set level failed(%d)\n",
-			__func__, rc);
-		return -1;
-	}
-
-	return 0;
+  V_LCMIO_1V8 = vreg_get(NULL, "lvsw0");
+  
+  if (IS_ERR(V_LCMIO_1V8)) {
+    pr_err("%s: wlan2 vreg get failed (%ld)\n",
+           __func__, PTR_ERR(V_LCMIO_1V8));
+    return -1;
+  }
+  
+  /* lcd panel power */
+  /* 2.85V -- LDO20 */
+ V_LCMIO_2V85 = vreg_get(NULL, "gp13");
+  
+  if (IS_ERR(V_LCMIO_2V85)) {
+    pr_err("%s: gp13 vreg get failed (%ld)\n",
+           __func__, PTR_ERR(V_LCMIO_2V85));
+    return -1;
+  }
+  
+  rc = vreg_set_level(V_LCMIO_1V8, 1800);
+  if (rc) {
+    pr_err("%s: vreg V_LCMIO_1V8 set level failed (%d)\n",
+           __func__, rc);
+    return -1;
+  }
+  return 0;
 }
 
 static int panel_lg_power(int on)
@@ -156,19 +174,18 @@ static int panel_lg_power(int on)
 	printk(KERN_INFO "%s: %d\n", __func__, on);
 
 	if (on) {
-		rc = vreg_enable(V_LCMIO_1V8);
-	}
-	if (rc) {
-		pr_err("%s: V_LCMIO_1V8 vreg enable failed (%d)\n",
-			__func__, rc);
-		return -1;
-	}
-
-	if (on) {
 		rc = vreg_enable(V_LCMIO_2V85);
 	}
 	if (rc) {
 		pr_err("%s: V_LCMIO_2V85 vreg enable failed (%d)\n",
+		__func__, rc);
+		return -1;
+	}
+
+	if (on)
+		rc = vreg_enable(V_LCMIO_1V8);
+	if (rc) {
+		pr_err("%s: V_LCMIO_1V8 vreg enable failed (%d)\n",
 			__func__, rc);
 		return -1;
 	}
@@ -187,14 +204,14 @@ static int panel_lg_power(int on)
 		hr_msleep(120);
 	}
 
-	if (!on) {
-		vreg_disable(V_LCMIO_2V85);
-		vreg_disable(V_LCMIO_1V8);
+	if(!on) {
+		rc = vreg_disable(V_LCMIO_1V8);
+		rc = vreg_disable(V_LCMIO_2V85);
 	}
 
 	if (rc) {
-		pr_err("%s: V_LCMIO_2V85, 1V8 vreg disable failed (%d)\n",
-			__func__, rc);
+		pr_err("%s: V_LCMIO_1V8, 20 vreg disable failed (%d)\n",
+		__func__, rc);
 		return -1;
 	}
 
@@ -211,24 +228,58 @@ static void lcdc_config_gpios(int on)
 		printk(KERN_ERR "%s: panel_gpio_switch failed!\n", __func__);
 }
 
-
 static struct msm_panel_common_pdata lcdc_panel_data = {
 	.panel_config_gpio = lcdc_config_gpios,
 };
 
-struct platform_device lcdc_primoc_lg_panel_device = {
-	.name   = "lcdc_primo_wvga",
+struct platform_device lcdc_lg_panel_device = {
+	.name   = "lcdc_s6d16a0x21_wvga",
 	.id     = 0,
 	.dev    = {
 		.platform_data = &lcdc_panel_data,
 	}
 };
 
+static struct msm_panel_common_pdata mddi_lg_pdata;
+static struct platform_device mddi_lg_device = {
+	.name   = "mddi_lg_wvga",
+	.id     = 0,
+	.dev    = {
+		.platform_data = &mddi_lg_pdata,
+	}
+};
+
+static int msm_fb_mddi_sel_clk(u32 *clk_rate)
+{
+  *clk_rate *= 2;
+	return 0;
+}
+
+static int
+mddi_hitachi_power(u32 on)
+{
+  printk(KERN_ERR "%s: %d\n", __func__, on);
+	if (panel_type == PANEL_ID_PRIMO_LG) {
+          vreg_enable(V_LCMIO_1V8);
+          gpio_set_value(PRIMOC_LCD_RSTz,0);
+          vreg_enable(V_LCMIO_2V85);
+          hr_msleep(1);
+          gpio_set_value(PRIMOC_LCD_RSTz,1);
+          hr_msleep(5);
+        }
+        return 1;
+}
+
+static struct mddi_platform_data mddi_pdata = {
+	.mddi_sel_clk = msm_fb_mddi_sel_clk,
+	.mddi_client_power = mddi_hitachi_power,
+};
+
 static struct msm_panel_common_pdata mdp_pdata = {
-	.hw_revision_addr = 0xac001270,
-	.gpio = 30,
-	.mdp_max_clk = 192000000,
-	.mdp_rev = MDP_REV_40,
+  .hw_revision_addr = 0xac001270,
+  .gpio = 30,
+  .mdp_max_clk = 192000000,
+  .mdp_rev = MDP_REV_40,
 };
 
 static int lcdc_panel_power(int on)
@@ -249,27 +300,40 @@ static struct lcdc_platform_data lcdc_pdata = {
 };
 
 struct msm_list_device primoc_fb_devices[] = {
-	{ "mdp", &mdp_pdata },
-	{ "lcdc", &lcdc_pdata }
+  { "mdp", &mdp_pdata },
+  { "pmdh", &mddi_pdata },
+  { "lcdc", &lcdc_pdata }
 };
 
 int device_fb_detect_panel(const char *name)
 {
-	return 0;
+  if (!strcmp(name, "lcdc_s6d16a0x21_wvga") && is_lg_panel())
+      return 0;
+  if (!strcmp(name, "mddi_lg_wvga") && is_hitachi_panel())
+    return 0;
 }
 
 int __init primoc_init_panel(void)
 {
-	int ret = 0;
+  int ret = 0;
 
-	ret = panel_init_power();
-	if(ret)
-	return ret;
+  ret = panel_init_power();
+  if (ret)
+    return ret;
 
-	msm_fb_add_devices(primoc_fb_devices, ARRAY_SIZE(primoc_fb_devices));
-
-	ret = platform_device_register(&lcdc_primoc_lg_panel_device);
-	printk(KERN_ERR "%s is LG panel: %d\n", __func__, panel_type);
-
-	return ret;
+  msm_fb_add_devices(
+                     primoc_fb_devices, ARRAY_SIZE(primoc_fb_devices));
+  if (is_lg_panel())
+    {
+      //    msm_fb_register_device("lcdc", &lcdc_pdata);
+      ret = platform_device_register(&lcdc_lg_panel_device);
+      printk(KERN_ERR "%s is sony panel: %d\n", __func__, panel_type);
+    }
+  else
+    {
+      //      msm_fb_register_device("mddi", &mddi_pdata);
+      //      ret = platform_device_register(&mddi_lg_device);
+      printk(KERN_ERR "%s: Panel not yet supported (%d)\n", __func__, panel_type);
+    }
+  return ret;
 }
