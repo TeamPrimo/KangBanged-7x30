@@ -141,23 +141,23 @@ static int panel_init_power(void)
   int rc;
 
   V_LCMIO_1V8 = vreg_get(NULL, "lvsw0");
-  
+
   if (IS_ERR(V_LCMIO_1V8)) {
     pr_err("%s: wlan2 vreg get failed (%ld)\n",
            __func__, PTR_ERR(V_LCMIO_1V8));
     return -1;
   }
-  
+
   /* lcd panel power */
   /* 2.85V -- LDO20 */
  V_LCMIO_2V85 = vreg_get(NULL, "gp13");
-  
+
   if (IS_ERR(V_LCMIO_2V85)) {
     pr_err("%s: gp13 vreg get failed (%ld)\n",
            __func__, PTR_ERR(V_LCMIO_2V85));
     return -1;
   }
-  
+
   rc = vreg_set_level(V_LCMIO_1V8, 1800);
   if (rc) {
     pr_err("%s: vreg V_LCMIO_1V8 set level failed (%d)\n",
@@ -233,7 +233,7 @@ static struct msm_panel_common_pdata lcdc_panel_data = {
 };
 
 struct platform_device lcdc_lg_panel_device = {
-	.name   = "lcdc_s6d16a0x21_wvga",
+	.name   = "lcdc_lg_wvga",
 	.id     = 0,
 	.dev    = {
 		.platform_data = &lcdc_panel_data,
@@ -307,7 +307,7 @@ struct msm_list_device primoc_fb_devices[] = {
 
 int device_fb_detect_panel(const char *name)
 {
-  if (!strcmp(name, "lcdc_s6d16a0x21_wvga") && is_lg_panel())
+  if (!strcmp(name, "lcdc_lg_wvga") && is_lg_panel())
       return 0;
   if (!strcmp(name, "mddi_lg_wvga") && is_hitachi_panel())
     return 0;
@@ -327,7 +327,7 @@ int __init primoc_init_panel(void)
     {
       //    msm_fb_register_device("lcdc", &lcdc_pdata);
       ret = platform_device_register(&lcdc_lg_panel_device);
-      printk(KERN_ERR "%s is sony panel: %d\n", __func__, panel_type);
+      printk(KERN_ERR "%s is LG panel: %d\n", __func__, panel_type);
     }
   else
     {

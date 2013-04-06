@@ -1,7 +1,7 @@
-/* drivers/video/msm/lcdc_primoc_wvga.c
+/* adapted from linux/arch/arm/mach-msm/panel-lgwvga-lgwvga-7x30.c
  *
- * Copyright (c) 2013 Simon Sickle <simon@simonsickle.com>
- * Copyright (c) 2012 HTC.
+ * Copyright (c) 2009 Google Inc.
+ * Copyright (c) 2009 HTC.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -22,754 +22,449 @@
 #include <linux/wakelock.h>
 #include <linux/leds.h>
 #include <asm/mach-types.h>
-#include <mach/panel_id.h>
+#include <mach/vreg.h>
 #include <linux/gpio.h>
 #include <linux/spi/spi.h>
+#include <mach/panel_id.h>
 #include <mach/atmega_microp.h>
 #include "msm_fb.h"
 
-#ifdef CONFIG_BACKLIGHT_MAX8957
-#include <linux/mfd/max8957_bl.h>
+#define DEBUG_LCM
+#ifdef DEBUG_LCM
+#define LCMDBG(fmt, arg...)	printk(fmt, ## arg)
+#else
+#define LCMDBG(fmt, arg...)	{}
 #endif
 
-#define BRIGHTNESS_DEFAULT_LEVEL        102
-
-static struct vreg *V_LCMIO_1V8;
-static struct vreg *V_LCMIO_2V85;
-
-static int primo_adjust_backlight(enum led_brightness val);
+#define SAMSUNG_PANEL		0
+/*Bitwise mask for SONY PANEL ONLY*/
+#define SONY_PANEL		0x1		/*Set bit 0 as 1 when it is SONY PANEL*/
+#define SONY_PWM_SPI		0x2		/*Set bit 1 as 1 as PWM_SPI mode, otherwise it is PWM_MICROP mode*/
+#define SONY_GAMMA		0x4		/*Set bit 2 as 1 when panel contains GAMMA table in its NVM*/
+#define SONY_RGB666		0x8		/*Set bit 3 as 1 when panel is 18 bit, otherwise it is 16 bit*/
 
 extern int panel_type;
+unsigned int g_unblank_stage = 0;
+
+#define LGWVGA_MIN_VAL		10
+#define LGWVGA_MAX_VAL		250
+#define LGWVGA_DEFAULT_VAL	(LGWVGA_MIN_VAL +		\
+					 (LGWVGA_MAX_VAL -	\
+					  LGWVGA_MIN_VAL) / 2)
+
+#define LGWVGA_BR_DEF_USER_PWM         143
+#define LGWVGA_BR_MIN_USER_PWM         30
+#define LGWVGA_BR_MAX_USER_PWM         255
+#define LGWVGA_BR_DEF_PANEL_PWM        128
+#define LGWVGA_BR_MIN_PANEL_PWM        8
+#define LGWVGA_BR_MAX_PANEL_PWM        255
+#define LGWVGA_BR_DEF_PANEL_UP_PWM    132
+#define LGWVGA_BR_MIN_PANEL_UP_PWM    9
+#define LGWVGA_BR_MAX_PANEL_UP_PWM    255
+
 static DEFINE_MUTEX(panel_lock);
+static uint8_t last_val_pwm = LGWVGA_BR_DEF_PANEL_PWM;
 static void (*panel_power_gpio)(int on);
 static struct wake_lock panel_idle_lock;
 
-static atomic_t lcm_init_done = ATOMIC_INIT(1);
-static uint8_t last_val = BRIGHTNESS_DEFAULT_LEVEL;
-static bool screen_on = true;
-
-static void primowvga_panel_power(int on)
+inline int is_sony_spi(void)
 {
-  if (panel_power_gpio)
-    (*panel_power_gpio)(on);
-  if (on == 1)
-    screen_on = true;
-}
-
-struct nov_regs primo_lgd_init_seq[] = {
-	{0x1100, 0x00},
-	{REG_WAIT,120},
-	{0xf000, 0x55},
-	{0xf001, 0xaa},
-	{0xf002, 0x52},
-	{0xf003, 0x08},
-	{0xf004, 0x01},
-
-	{0xb000, 0x0A},
-	{0xb001, 0x0A},
-	{0xb002, 0x0A},
-	{0xb600, 0x43},
-	{0xb601, 0x43},
-	{0xb602, 0x43},
-	{0xb100, 0x0A},
-	{0xb101, 0x0A},
-	{0xb102, 0x0A},
-	{0xb700, 0x33},
-	{0xb701, 0x33},
-	{0xb702, 0x33},
-	{0xb200, 0x01},
-	{0xb201, 0x01},
-	{0xb202, 0x01},
-	{0xb800, 0x24},
-	{0xb801, 0x24},
-	{0xb802, 0x24},
-	{0xb300, 0x08},
-	{0xb301, 0x08},
-	{0xb302, 0x08},
-	{0xb900, 0x22},
-	{0xb901, 0x22},
-	{0xb902, 0x22},
-	{0xbf00, 0x00},
-	{0xba00, 0x22},
-	{0xba01, 0x22},
-	{0xba02, 0x22},
-	{0xc200, 0x02},
-	{0xbc00, 0x00},
-	{0xbc01, 0xA0},
-	{0xbc02, 0x00},
-	{0xbd00, 0x00},
-	{0xbd01, 0xA0},
-	{0xbd02, 0x00},
-	{0xd000, 0x0f},
-	{0xd001, 0x0f},
-	{0xd002, 0x10},
-	{0xd003, 0x10},
-	{0xd100, 0x00},
-	{0xd101, 0x5D},
-	{0xd102, 0x00},
-	{0xd103, 0x76},
-	{0xd104, 0x00},
-	{0xd105, 0xa1},
-	{0xd106, 0x00},
-	{0xd107, 0xc2},
-	{0xd108, 0x00},
-	{0xd109, 0xdc},
-	{0xd10a, 0x00},
-	{0xd10b, 0xfb},
-	{0xd10c, 0x01},
-	{0xd10d, 0x11},
-	{0xd10e, 0x01},
-	{0xd10f, 0x41},
-	{0xd110, 0x01},
-	{0xd111, 0x6d},
-	{0xd112, 0x01},
-	{0xd113, 0x9e},
-	{0xd114, 0x01},
-	{0xd115, 0xc8},
-	{0xd116, 0x02},
-	{0xd117, 0x16},
-	{0xd118, 0x02},
-	{0xd119, 0x54},
-	{0xd11a, 0x02},
-	{0xd11b, 0x55},
-	{0xd11c, 0x02},
-	{0xd11d, 0x8e},
-	{0xd11e, 0x02},
-	{0xd11f, 0xc9},
-	{0xd120, 0x02},
-	{0xd121, 0xf3},
-	{0xd122, 0x03},
-	{0xd123, 0x22},
-	{0xd124, 0x03},
-	{0xd125, 0x45},
-	{0xd126, 0x03},
-	{0xd127, 0x73},
-	{0xd128, 0x03},
-	{0xd129, 0x8e},
-	{0xd12a, 0x03},
-	{0xd12b, 0xaa},
-	{0xd12c, 0x03},
-	{0xd12d, 0xba},
-	{0xd12e, 0x03},
-	{0xd12f, 0xcb},
-	{0xd130, 0x03},
-	{0xd131, 0xde},
-	{0xd132, 0x03},
-	{0xd133, 0xea},
-	{0xd200, 0x00},
-	{0xd201, 0x5d},
-	{0xd202, 0x00},
-	{0xd203, 0x76},
-	{0xd204, 0x00},
-	{0xd205, 0xa1},
-	{0xd206, 0x00},
-	{0xd207, 0xc2},
-	{0xd208, 0x00},
-	{0xd209, 0xdc},
-	{0xd20a, 0x00},
-	{0xd20b, 0xfb},
-	{0xd20c, 0x01},
-	{0xd20d, 0x11},
-	{0xd20e, 0x01},
-	{0xd20f, 0x41},
-	{0xd210, 0x01},
-	{0xd211, 0x6d},
-	{0xd212, 0x01},
-	{0xd213, 0x9e},
-	{0xd214, 0x01},
-	{0xd215, 0xc8},
-	{0xd216, 0x02},
-	{0xd217, 0x16},
-	{0xd218, 0x02},
-	{0xd219, 0x54},
-	{0xd21a, 0x02},
-	{0xd21b, 0x55},
-	{0xd21c, 0x02},
-	{0xd21d, 0x8e},
-	{0xd21e, 0x02},
-	{0xd21f, 0xc9},
-	{0xd220, 0x02},
-	{0xd221, 0xf3},
-	{0xd222, 0x03},
-	{0xd223, 0x22},
-	{0xd224, 0x03},
-	{0xd225, 0x45},
-	{0xd226, 0x03},
-	{0xd227, 0x73},
-	{0xd228, 0x03},
-	{0xd229, 0x8e},
-	{0xd22a, 0x03},
-	{0xd22b, 0xaa},
-	{0xd22c, 0x03},
-	{0xd22d, 0xba},
-	{0xd22e, 0x03},
-	{0xd22f, 0xcb},
-	{0xd230, 0x03},
-	{0xd231, 0xde},
-	{0xd232, 0x03},
-	{0xd233, 0xea},
-	{0xd300, 0x00},
-	{0xd301, 0x5d},
-	{0xd302, 0x00},
-	{0xd303, 0x76},
-	{0xd304, 0x00},
-	{0xd305, 0xa1},
-	{0xd306, 0x00},
-	{0xd307, 0xc2},
-	{0xd308, 0x00},
-	{0xd309, 0xdc},
-	{0xd30a, 0x00},
-	{0xd30b, 0xfb},
-	{0xd30c, 0x01},
-	{0xd30d, 0x11},
-	{0xd30e, 0x01},
-	{0xd30f, 0x41},
-	{0xd310, 0x01},
-	{0xd311, 0x6d},
-	{0xd312, 0x01},
-	{0xd313, 0x9e},
-	{0xd314, 0x01},
-	{0xd315, 0xc8},
-	{0xd316, 0x02},
-	{0xd317, 0x16},
-	{0xd318, 0x02},
-	{0xd319, 0x54},
-	{0xd31a, 0x02},
-	{0xd31b, 0x55},
-	{0xd31c, 0x02},
-	{0xd31d, 0x8e},
-	{0xd31e, 0x02},
-	{0xd31f, 0xc9},
-	{0xd320, 0x02},
-	{0xd321, 0xf3},
-	{0xd322, 0x03},
-	{0xd323, 0x22},
-	{0xd324, 0x03},
-	{0xd325, 0x45},
-	{0xd326, 0x03},
-	{0xd327, 0x73},
-	{0xd328, 0x03},
-	{0xd329, 0x8e},
-	{0xd32a, 0x03},
-	{0xd32b, 0xaa},
-	{0xd32c, 0x03},
-	{0xd32d, 0xba},
-	{0xd32e, 0x03},
-	{0xd32f, 0xcb},
-	{0xd330, 0x03},
-	{0xd331, 0xde},
-	{0xd332, 0x03},
-	{0xd333, 0xea},
-	{0xd400, 0x00},
-	{0xd401, 0x05},
-	{0xd402, 0x00},
-	{0xd403, 0x22},
-	{0xd404, 0x00},
-	{0xd405, 0x51},
-	{0xd406, 0x00},
-	{0xd407, 0x73},
-	{0xd408, 0x00},
-	{0xd409, 0x8d},
-	{0xd40a, 0x00},
-	{0xd40b, 0xb2},
-	{0xd40c, 0x00},
-	{0xd40d, 0xc6},
-	{0xd40e, 0x00},
-	{0xd40f, 0xf0},
-	{0xd410, 0x01},
-	{0xd411, 0x15},
-	{0xd412, 0x01},
-	{0xd413, 0x53},
-	{0xd414, 0x01},
-	{0xd415, 0x89},
-	{0xd416, 0x01},
-	{0xd417, 0xcf},
-	{0xd418, 0x02},
-	{0xd419, 0x09},
-	{0xd41a, 0x02},
-	{0xd41b, 0x0a},
-	{0xd41c, 0x02},
-	{0xd41d, 0x48},
-	{0xd41e, 0x02},
-	{0xd41f, 0x98},
-	{0xd420, 0x02},
-	{0xd421, 0xd1},
-	{0xd422, 0x03},
-	{0xd423, 0x18},
-	{0xd424, 0x03},
-	{0xd425, 0x47},
-	{0xd426, 0x03},
-	{0xd427, 0x73},
-	{0xd428, 0x03},
-	{0xd429, 0x8e},
-	{0xd42a, 0x03},
-	{0xd42b, 0xaa},
-	{0xd42c, 0x03},
-	{0xd42d, 0xba},
-	{0xd42e, 0x03},
-	{0xd42f, 0xcb},
-	{0xd430, 0x03},
-	{0xd431, 0xde},
-	{0xd432, 0x03},
-	{0xd433, 0xea},
-	{0xd500, 0x00},
-	{0xd501, 0x05},
-	{0xd502, 0x00},
-	{0xd503, 0x22},
-	{0xd504, 0x00},
-	{0xd505, 0x51},
-	{0xd506, 0x00},
-	{0xd507, 0x73},
-	{0xd508, 0x00},
-	{0xd509, 0x8d},
-	{0xd50a, 0x00},
-	{0xd50b, 0xb2},
-	{0xd50c, 0x00},
-	{0xd50d, 0xc6},
-	{0xd50e, 0x00},
-	{0xd50f, 0xf0},
-	{0xd510, 0x01},
-	{0xd511, 0x15},
-	{0xd512, 0x01},
-	{0xd513, 0x53},
-	{0xd514, 0x01},
-	{0xd515, 0x89},
-	{0xd516, 0x01},
-	{0xd517, 0xcf},
-	{0xd518, 0x02},
-	{0xd519, 0x09},
-	{0xd51a, 0x02},
-	{0xd51b, 0x0a},
-	{0xd51c, 0x02},
-	{0xd51d, 0x48},
-	{0xd51e, 0x02},
-	{0xd51f, 0x98},
-	{0xd520, 0x02},
-	{0xd521, 0xd1},
-	{0xd522, 0x03},
-	{0xd523, 0x18},
-	{0xd524, 0x03},
-	{0xd525, 0x47},
-	{0xd526, 0x03},
-	{0xd527, 0x73},
-	{0xd528, 0x03},
-	{0xd529, 0x8e},
-	{0xd52a, 0x03},
-	{0xd52b, 0xaa},
-	{0xd52c, 0x03},
-	{0xd52d, 0xba},
-	{0xd52e, 0x03},
-	{0xd52f, 0xcb},
-	{0xd530, 0x03},
-	{0xd531, 0xde},
-	{0xd532, 0x03},
-	{0xd533, 0xea},
-	{0xd600, 0x00},
-	{0xd601, 0x05},
-	{0xd602, 0x00},
-	{0xd603, 0x22},
-	{0xd604, 0x00},
-	{0xd605, 0x51},
-	{0xd606, 0x00},
-	{0xd607, 0x73},
-	{0xd608, 0x00},
-	{0xd609, 0x8d},
-	{0xd60a, 0x00},
-	{0xd60b, 0xb2},
-	{0xd60c, 0x00},
-	{0xd60d, 0xc6},
-	{0xd60e, 0x00},
-	{0xd60f, 0xf0},
-	{0xd610, 0x01},
-	{0xd611, 0x15},
-	{0xd612, 0x01},
-	{0xd613, 0x53},
-	{0xd614, 0x01},
-	{0xd615, 0x89},
-	{0xd616, 0x01},
-	{0xd617, 0xcf},
-	{0xd618, 0x02},
-	{0xd619, 0x09},
-	{0xd61a, 0x02},
-	{0xd61b, 0x0a},
-	{0xd61c, 0x02},
-	{0xd61d, 0x48},
-	{0xd61e, 0x02},
-	{0xd61f, 0x98},
-	{0xd620, 0x02},
-	{0xd621, 0xd1},
-	{0xd622, 0x03},
-	{0xd623, 0x18},
-	{0xd624, 0x03},
-	{0xd625, 0x47},
-	{0xd626, 0x03},
-	{0xd627, 0x73},
-	{0xd628, 0x03},
-	{0xd629, 0x8e},
-	{0xd62a, 0x03},
-	{0xd62b, 0xaa},
-	{0xd62c, 0x03},
-	{0xd62d, 0xba},
-	{0xd62e, 0x03},
-	{0xd62f, 0xcb},
-	{0xd630, 0x03},
-	{0xd631, 0xde},
-	{0xd632, 0x03},
-	{0xd633, 0xea},
-	//pwm control
-	{0xf000, 0x55},
-	{0xf001, 0xaa},
-	{0xf002, 0x52},
-	{0xf003, 0x08},
-	{0xf004, 0x00},
-	{0xB400, 0x10},
-	{0xe000, 0x01},
-	{0xe001, 0x01},
-	//pwm control
-	{0xb100, 0xc8},
-	{0xb101, 0x00},
-	{0xb600, 0x05},
-	{0xb700, 0x71},
-	{0xb701, 0x71},
-	{0xb800, 0x01},
-	{0xb801, 0x05},
-	{0xb802, 0x05},
-	{0xb803, 0x05},
-	{0xb900, 0x00},
-	{0xb901, 0x40},
-	{0xba00, 0x05},
-	{0xbc00, 0x00},
-	{0xbc01, 0x00},
-	{0xbc02, 0x00},
-	{0xbd00, 0x01},
-	{0xbd01, 0x8c},
-	{0xbd02, 0x14},
-	{0xbd03, 0x14},
-	{0xbd04, 0x00},
-	{0xbe00, 0x01},
-	{0xbe01, 0x8c},
-	{0xbe02, 0x14},
-	{0xbe03, 0x14},
-	{0xbe04, 0x00},
-	{0xbf00, 0x01},
-	{0xbf01, 0x8c},
-	{0xbf02, 0x14},
-	{0xbf03, 0x14},
-	{0xbf04, 0x00},
-	{0xc900, 0xc2},
-	{0xc901, 0x02},
-	{0xc902, 0x50},
-	{0xc903, 0x50},
-	{0xc904, 0x50},
-	//CABC
-	{0xD400, 0x05},
-	{0xDD00, 0x55},
-
-	{0xE400, 0xFF},
-	{0xE401, 0xF7},
-	{0xE402, 0xEF},
-	{0xE403, 0xE7},
-	{0xE404, 0xDF},
-	{0xE405, 0xD7},
-	{0xE406, 0xCF},
-	{0xE407, 0xC7},
-	{0xE408, 0xBF},
-	{0xE409, 0xB7},
-
-	//CABC END
-	//Page Enbale
-	{0xFF00, 0xAA},
-	{0xFF01, 0x55},
-	{0xFF02, 0x25},
-	{0xFF03, 0x01},
-	//saturation off
-	{0xF50C, 0x03},
-	// Values for Vivid Color start
-	{0xF900, 0x0a},
-	{0xF901, 0x00},
-	{0xF902, 0x0e},
-	{0xF903, 0x1f},
-	{0xF904, 0x37},
-	{0xF905, 0x55},
-	{0xF906, 0x6e},
-	{0xF907, 0x6e},
-	{0xF908, 0x46},
-	{0xF909, 0x28},
-	{0xF90A, 0x0e},
-	// Vivid Color end
-	{0x5300, 0x2c},
-	{0x3600, 0x00},
-	{0x4400, 0x01},
-	{0x4401, 0x77},
-	//CABC Mode Selection
-	{0x5500, 0x03},
-	{0x5E00, 0x06},
-
-	{0x3500, 0x00},
-	{0x2900, 0x00},
-};
-
-struct nov_regs primo_sony_init_seq[] = {
-	{0x1100, 0x00},
-	{REG_WAIT, 120},
-	{0xF000, 0x55},
-	{0xF001, 0xaa},
-	{0xF002, 0x52},
-	{0xF003, 0x08},
-	{0xF004, 0x00},
-
-	{0xB400, 0x10},
-	{0xE000, 0x01},
-	{0xE001, 0x01},
-	{0xB800, 0x00},
-	{0xB801, 0x00},
-	{0xB802, 0x00},
-	{0xB803, 0x00},
-	{0xBC00, 0x00},
-	{0xBC01, 0x00},
-	{0xBC02, 0x00},
-	//CABC
-	{0xD400, 0x05},
-	{0xDD00, 0x55},
-
-	{0xE400, 0xFF},
-	{0xE401, 0xF7},
-	{0xE402, 0xEF},
-	{0xE403, 0xE7},
-	{0xE404, 0xDF},
-	{0xE405, 0xD7},
-	{0xE406, 0xCF},
-	{0xE407, 0xC7},
-	{0xE408, 0xBF},
-	{0xE409, 0xB7},
-
-	//CABC END
-	//Page Enbale
-	{0xFF00, 0xAA},
-	{0xFF01, 0x55},
-	{0xFF02, 0x25},
-	{0xFF03, 0x01},
-	//saturation off
-	{0xF50C, 0x03},
-
-	// Values for Vivid Color start
-	{0xF900, 0x0a},
-	{0xF901, 0x00},
-	{0xF902, 0x0e},
-	{0xF903, 0x1f},
-	{0xF904, 0x37},
-	{0xF905, 0x55},
-	{0xF906, 0x6e},
-	{0xF907, 0x6e},
-	{0xF908, 0x46},
-	{0xF909, 0x28},
-	{0xF90A, 0x0e},
-	// Vivid Color end
-	{0x3500, 0x00},
-	{0x4400, 0x01},
-	{0x4401, 0xb3},
-	{0x2900, 0x00},
-	{0x5500, 0x03},
-	{0x5E00, 0x06},
-};
-
-static int primo_panel_init(void) {
-	int i = 0, array_size = 0;
-	unsigned reg, val;
-	struct nov_regs *init_seq = NULL;
-
-	client_data->auto_hibernate(client_data, 0);
-
-	init_seq = primo_lgd_init_seq;
-	array_size = ARRAY_SIZE(primo_lgd_init_seq);
-
-	for (i = 0; i < array_size; i++) {
-		reg = cpu_to_le32(init_seq[i].reg);
-		val = cpu_to_le32(init_seq[i].val);
-		if (reg == REG_WAIT)
-			msleep(val);
-		else
-			client_data->remote_write(client_data, val, reg);
-	}
-
-	client_data->auto_hibernate(client_data, 1);
-
-	if (axi_clk)
-		clk_set_rate(axi_clk, 0);
-	return 0;
-}
-
-static int lcdc_primo_panel_on(struct platform_device *pdev)
-{
-	screen_on = true;
-	mutex_lock(&panel_lock);
-	primo_panel_init();
-	mutex_unlock(&panel_lock);
-	atomic_set(&lcm_init_done, 1);
-	primo_adjust_backlight(last_val);
-	return 0;
-}
-
-static int lcdc_primo_panel_off(struct platform_device *pdev)
-{
-	screen_on = false;
-	primo_adjust_backlight(0);
-	atomic_set(&lcm_init_done, 0);
-	return 0;
-}
-
-static int primo_adjust_backlight(enum led_brightness val)
-{
-	uint32_t def_bl;
-        uint8_t data[4] = {     /* PWM setting of microp, see p.8 */
-                0x05,           /* Fading time; suggested: 5/10/15/20/25 */
-                val,            /* Duty Cycle */
-                0x00,           /* Channel H byte */
-                0x20,           /* Channel L byte */
-                };
-	uint8_t shrink_br;
-
-
-	if (panel_type == PANEL_ID_PRIMO_SONY)
-		def_bl = 101;
+	if( panel_type == PANEL_ID_PRIMO_LG )
+		return ( (panel_type & BL_MASK) == BL_SPI ? 1 : 0 );
 	else
-		def_bl = 91;
+		return ( panel_type & LG_PWM_SPI ? 1 : 0 );
+}
 
-        mutex_lock(&panel_lock);
-        if (val == 0)
-                shrink_br = 0;
-        else if (val <= 30)
-                shrink_br = 7;
-        else if ((val > 30) && (val <= 143))
-                shrink_br = (def_bl - 7) * (val - 30) / (143 - 30) + 7;
-        else
-                shrink_br = (217 - def_bl) * (val - 143) / (255 - 143) + def_bl;
+inline int is_sony_with_gamma(void)
+{
+	if(panel_type == PANEL_ID_PRIMO_LG)
+		return 1;
+	else
+		return (panel_type & SONY_GAMMA ? 1 : 0);
+}
 
-	if (shrink_br == 0)
-		 data[0] = 0;
-        data[1] = shrink_br;
+inline int is_sony_RGB666(void)
+{
+	if(panel_type == PANEL_ID_PRIMO_LG)
+		return ((panel_type & DEPTH_MASK) == DEPTH_RGB666 ? 1 : 0);
+	else
+		return (panel_type & SONY_RGB666 ? 1 : 0);
+}
 
-	if (screen_on == false && shrink_br > 0){
-		printk("lcdcpanel: screen is off,not setting brightness > 0, shrink_br=%d\n", shrink_br);
-		shrink_br = 0;
+static const char *PanelVendor = "lge";
+static const char *PanelNAME = "lg";
+static const char *PanelSize = "wvga";
+
+static ssize_t panel_vendor_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	ssize_t ret = 0;
+
+	sprintf(buf, "%s %s %s\n", PanelVendor, PanelNAME, PanelSize);
+	ret = strlen(buf) + 1;
+
+	return ret;
+}
+
+static DEVICE_ATTR(panel, 0444, panel_vendor_show, NULL);
+static struct kobject *android_display;
+
+static int display_sysfs_init(void)
+{
+	int ret ;
+	printk(KERN_INFO "display_sysfs_init : kobject_create_and_add\n");
+	android_display = kobject_create_and_add("android_display", NULL);
+	if (android_display == NULL) {
+		printk(KERN_INFO "display_sysfs_init: subsystem_register " \
+		"failed\n");
+		ret = -ENOMEM;
+		return ret ;
+	}
+	printk(KERN_INFO "display_sysfs_init : sysfs_create_file\n");
+	ret = sysfs_create_file(android_display, &dev_attr_panel.attr);
+	if (ret) {
+		printk(KERN_INFO "display_sysfs_init : sysfs_create_file " \
+		"failed\n");
+		kobject_del(android_display);
+	}
+
+	return 0 ;
+}
+
+static int
+lgwvga_panel_shrink_pwm(int brightness)
+{
+	int level;
+	unsigned int min_pwm, def_pwm, max_pwm;
+
+	if(!is_sony_spi()) {
+		min_pwm = LGWVGA_BR_MIN_PANEL_UP_PWM;
+		def_pwm = LGWVGA_BR_DEF_PANEL_UP_PWM;
+		max_pwm = LGWVGA_BR_MAX_PANEL_UP_PWM;
 	} else {
-		microp_i2c_write(0x25, data, sizeof(data));
-		last_val = shrink_br ? shrink_br: last_val;
-	  }	
-        mutex_unlock(&panel_lock);
-
-	return shrink_br;
-}
-
-static void primo_brightness_set(struct led_classdev *led_cdev,
-		enum led_brightness val)
-{
-	if (atomic_read(&lcm_init_done) == 0) {
-		last_val = val ? val : last_val;
-		printk("printk:lcm not ready, val=%d\n", val);
-		return;
+		min_pwm = LGWVGA_BR_MIN_PANEL_PWM;
+		def_pwm = LGWVGA_BR_DEF_PANEL_PWM;
+		max_pwm = LGWVGA_BR_MAX_PANEL_PWM;
 	}
-	if (screen_on == false && val > 0){
-		printk("printk: screen is off,not setting brightness > 0, val=%d\n", val);
-		return;
+
+	if (brightness <= LGWVGA_BR_DEF_USER_PWM) {
+		if (brightness <= LGWVGA_BR_MIN_USER_PWM)
+			level = min_pwm;
+		else
+			level = (def_pwm - min_pwm) *
+				(brightness - LGWVGA_BR_MIN_USER_PWM) /
+				(LGWVGA_BR_DEF_USER_PWM - LGWVGA_BR_MIN_USER_PWM) +
+				min_pwm;
+	} else
+		level = (max_pwm - def_pwm) *
+		(brightness - LGWVGA_BR_DEF_USER_PWM) /
+		(LGWVGA_BR_MAX_USER_PWM - LGWVGA_BR_DEF_USER_PWM) +
+		def_pwm;
+
+	return level;
+}
+
+static void lgwvga_panel_power(int on)
+{
+	if (panel_power_gpio)
+		(*panel_power_gpio)(on);
+}
+
+extern int qspi_send_9bit(struct spi_msg *msg);
+
+#define LCM_CMD(_cmd, ...)					\
+{                                                               \
+        .cmd = _cmd,                                            \
+        .data = (u8 []){__VA_ARGS__},                           \
+        .len = sizeof((u8 []){__VA_ARGS__}) / sizeof(u8)        \
+}
+//2010-5-21 Rev May21-2(Wx, Wy)=(0.306, 0.315) Gamma = 2.2
+static struct spi_msg SONY_TFT_INIT_TABLE[] = {
+        //Change to level 2
+	LCM_CMD(0xF1, 0x5A, 0x5A),
+	LCM_CMD(0xFA, 0x32, 0x3F, 0x3F, 0x29, 0x3E, 0x3C, 0x3D, 0x2C,
+		0x27, 0x3D, 0x2E, 0x31, 0x3A, 0x34, 0x36, 0x1A, 0x3F, 0x3F, 0x2E,
+		0x40, 0x3C, 0x3C, 0x2B, 0x25, 0x39, 0x25, 0x23, 0x2A, 0x20, 0x22,
+		0x00, 0x3F, 0x3F, 0x2F, 0x3E, 0x3C, 0x3C, 0x2A, 0x23, 0x35, 0x1E,
+		0x18, 0x1C, 0x0C, 0x0E),
+	LCM_CMD(0xFB, 0x00, 0x0D, 0x09, 0x0C, 0x26, 0x2E, 0x31, 0x22,
+		0x19, 0x33, 0x22, 0x23, 0x21, 0x17, 0x00, 0x00, 0x25, 0x1D, 0x1F,
+		0x35, 0x3C, 0x3A, 0x26, 0x1B, 0x34, 0x23, 0x23, 0x1F, 0x12, 0x00,
+		0x00, 0x3F, 0x31, 0x33, 0x43, 0x48, 0x41, 0x2A, 0x1D, 0x35, 0x23,
+		0x23, 0x21, 0x10, 0x00),
+        // F3h Power control
+	LCM_CMD(0xF3, 0x00, 0x10, 0x25, 0x01, 0x2D, 0x2D, 0x24, 0x2D, 0x10,
+		0x10, 0x0A, 0x37),
+        // F4h VCOM Control
+	LCM_CMD(0xF4, 0x88, 0x20, 0x00, 0xAF, 0x64, 0x00, 0xAA, 0x64, 0x00, 0x00),
+        //Change to level 1
+	LCM_CMD(0xF0, 0x5A, 0x5A),
+};
+
+
+static struct spi_msg SONY_GAMMA_UPDATE_TABLE[] = {
+	LCM_CMD(0x53, 0x24),
+	LCM_CMD(0xF0, 0x5A, 0x5A),
+	LCM_CMD(0xF1, 0x5A, 0x5A),
+	LCM_CMD(0xD0, 0x5A, 0x5A),
+	LCM_CMD(0xC2, 0x53, 0x12),
+};
+static struct spi_msg SAG_SONY_GAMMA_UPDATE_TABLE[] = {
+	LCM_CMD(0x53, 0x24),
+	LCM_CMD(0xF0, 0x5A, 0x5A),
+	LCM_CMD(0xF1, 0x5A, 0x5A),
+	LCM_CMD(0xD0, 0x5A, 0x5A),
+	LCM_CMD(0xC2, 0x36, 0x12),//Change PWM to 13k for HW's request
+};
+
+static int lcm_write_tb(struct spi_msg cmd_table[], unsigned size)
+{
+	int i;
+
+	for (i = 0; i < size; i++)
+		qspi_send_9bit(&cmd_table[i]);
+	return 0;
+}
+
+static char shrink_pwm = 0x00;
+static struct spi_msg gamma_update = {
+	.cmd = 0x51,
+	.len = 1,
+	.data = &shrink_pwm,
+};
+
+static struct spi_msg unblank_msg = {
+	.cmd = 0x29,
+	.len = 0,
+};
+
+static struct spi_msg blank_msg= {
+	.cmd = 0x28,
+	.len = 0,
+};
+
+static struct spi_msg init_cmd = {
+	.cmd = 0x11,
+	.len = 0,
+};
+
+static char init_data = 0x05;
+static struct spi_msg init_cmd2 = {
+	.cmd = 0x3A,
+	.len = 1,
+	.data = &init_data,
+};
+
+/*
+ * Caller must make sure the spi is ready
+ * */
+static void lgwvga_set_gamma_val(int val)
+{
+	uint8_t data[4] = {0, 0, 0, 0};
+
+	if (!is_sony_spi()) {
+		//turn on backlight
+		data[0] = 5;
+		data[1] = LGWVGA_panel_shrink_pwm(val);
+		data[3] = 1;
+		microp_i2c_write(0x25, data, 4);
+	} else {
+		shrink_pwm = LGWVGA_panel_shrink_pwm(val);
+		qspi_send_9bit(&gamma_update);
+		if( panel_type == PANEL_ID_PRIMO_LG )
+			lcm_write_tb(SAG_SONY_GAMMA_UPDATE_TABLE,  ARRAY_SIZE(SAG_SONY_GAMMA_UPDATE_TABLE));
+		else
+			lcm_write_tb(SONY_GAMMA_UPDATE_TABLE,  ARRAY_SIZE(SONY_GAMMA_UPDATE_TABLE));
 	}
-	led_cdev->brightness = primo_adjust_backlight(val);
+	last_val_pwm = val;
 }
 
-static struct led_classdev primo_backlight_led = {
-	.name = "lcd-backlight",
-	.brightness = LED_FULL,
-	.brightness_set = primo_brightness_set,
-};
-
-static int primo_backlight_probe(struct platform_device *pdev)
+static int LGWVGA_panel_init(void)
 {
-	int rc;
+	wake_lock(&panel_idle_lock);
+	mutex_lock(&panel_lock);
+	LGWVGA_panel_power(1);
+	hr_msleep(100);
 
-	rc = led_classdev_register(&pdev->dev, &primo_backlight_led);
-	if (rc)
-		printk("backlight: failure on register led_classdev\n");
-	return 0;
-}
-
-static struct platform_device primo_backlight = {
-	.name = "primo-backlight",
-};
-
-static struct platform_driver primo_backlight_driver = {
-	.probe          = primo_backlight_probe,
-	.driver         = {
-		.name   = "primo-backlight",
-		.owner  = THIS_MODULE,
-	},
-};
-
-static int __init primowvga_init_panel(void)
-{
-	int ret;
-
-	/* set gpio to proper state in the beginning */
-	primowvga_panel_power(1);
-
-	wake_lock_init(&panel_idle_lock, WAKE_LOCK_SUSPEND,
-			"backlight_present");
-
-	ret = platform_device_register(&primo_backlight);
-	if (ret)
-		return ret;
+	qspi_send_9bit(&init_cmd);
+	hr_msleep(5);
+	if (is_sony_RGB666()) {
+		init_data = 0x06;
+		qspi_send_9bit(&init_cmd2);
+	} else {
+		init_data = 0x05;
+		qspi_send_9bit(&init_cmd2);
+	}
+	mutex_unlock(&panel_lock);
+	wake_unlock(&panel_idle_lock);
 
 	return 0;
 }
 
-static int primowvga_probe(struct platform_device *pdev)
+static int lgwvga_panel_unblank(struct platform_device *pdev)
 {
-	int rc = -EIO;
-	struct msm_panel_common_pdata *lcdc_primowvga_pdata;
+	LCMDBG("%s\n", __func__);
 
-	pr_info("%s: id=%d\n", __func__, pdev->id);
+	if (lgwvga_panel_init())
+		printk(KERN_ERR "lgwvga_panel_init failed\n");
 
-	/* power control */
-	lcdc_primowvga_pdata = pdev->dev.platform_data;
-	panel_power_gpio = lcdc_primowvga_pdata->panel_config_gpio;
+	wake_lock(&panel_idle_lock);
+	mutex_lock(&panel_lock);
 
-	rc = primowvga_init_panel();
-	if (rc)
-		printk(KERN_ERR "%s fail %d\n", __func__, rc);
+	hr_msleep(100);
+	printk(KERN_ERR "%s: will send unblank\n",__func__);
+	qspi_send_9bit(&unblank_msg);
+	printk(KERN_ERR "%s: good!\n",__func__);
+	hr_msleep(20);
 
-	return rc;
-}
+	//init gamma setting
+	if(!is_sony_with_gamma())
+		lcm_write_tb(SONY_TFT_INIT_TABLE,
+			ARRAY_SIZE(SONY_TFT_INIT_TABLE));
 
-static struct platform_driver this_driver = {
-	.probe = primowvga_probe,
-	.driver = {
-		.name = "lcdc_primo_wvga"
-	},
-};
+	lgwvga_set_gamma_val(last_val_pwm);
+	g_unblank_stage = 1;        
 
-int primo_panel_sleep_in(void)
-{
+	mutex_unlock(&panel_lock);
+	wake_unlock(&panel_idle_lock);
 	return 0;
 }
 
-static struct msm_fb_panel_data primowvga_panel_data= {
-	.on = lcdc_primo_panel_on,
-	.off = lcdc_primo_panel_off,
+static int lgwvga_panel_blank(struct platform_device *pdev)
+{
+	uint8_t data[4] = {0, 0, 0, 0};
+	LCMDBG("%s\n", __func__);
+
+	mutex_lock(&panel_lock);
+
+	blank_msg.cmd = 0x28;
+	qspi_send_9bit(&blank_msg);
+	blank_msg.cmd = 0x10;
+	qspi_send_9bit(&blank_msg);
+	hr_msleep(40);
+	g_unblank_stage = 0;
+	mutex_unlock(&panel_lock);
+	lgwvga_panel_power(0);
+
+	if (!is_sony_spi()) {
+		data[0] = 5;
+		data[1] = 0;
+		data[3] = 1;
+		microp_i2c_write(0x25, data, 4);
+	}
+	return 0;
+}
+
+void lgwvga_brightness_set(struct led_classdev *led_cdev,
+			enum led_brightness val)
+{
+	led_cdev->brightness = val;
+
+	mutex_lock(&panel_lock);
+	if(g_unblank_stage)
+		lgwvga_set_gamma_val(val);
+	else
+		last_val_pwm =val;
+	mutex_unlock(&panel_lock);
+}
+
+static struct msm_fb_panel_data lgwvga_panel_data = {
+	.on = lgwvga_panel_unblank,
+	.off = lgwvga_panel_blank,
 };
 
 static struct platform_device this_device = {
 	.name	= "lcdc_panel",
 	.id	= 1,
 	.dev	= {
-		.platform_data = &primowvga_panel_data,
+		.platform_data = &lgwvga_panel_data,
 	},
 };
 
-static int __init primowvga_init(void)
+static struct led_classdev lgwvga_backlight_led = {
+	.name = "lcd-backlight",
+	.brightness = LED_FULL,
+	.brightness_set = lgwvga_brightness_set,
+};
+
+static int lgwvga_backlight_probe(struct platform_device *pdev)
 {
+	int rc;
+
+	rc = led_classdev_register(&pdev->dev, &lgwvga_backlight_led);
+	if (rc)
+		LCMDBG("backlight: failure on register led_classdev\n");
+	return 0;
+}
+
+static struct platform_device lgwvga_backlight = {
+	.name = "lcd-backlight",
+};
+
+static struct platform_driver lgwvga_backlight_driver = {
+	.probe		= lgwvga_backlight_probe,
+	.driver		= {
+		.name	= "lcd-backlight",
+		.owner	= THIS_MODULE,
+	},
+};
+
+static int __init lgwvga_init_panel(void)
+{
+	int ret;
+	/* set gpio to proper state in the beginning */
+	if (panel_power_gpio)
+		(*panel_power_gpio)(1);
+
+	wake_lock_init(&panel_idle_lock, WAKE_LOCK_SUSPEND,
+			"backlight_present");
+
+	ret = platform_device_register(&lgwvga_backlight);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
+static int lgwvga_probe(struct platform_device *pdev)
+{
+	int rc = -EIO;
+	struct msm_panel_common_pdata *lcdc_lgwvga_pdata;
+
+	pr_info("%s: id=%d\n", __func__, pdev->id);
+
+	if(!is_sony_spi())
+		last_val_pwm = LGWVGA_DEFAULT_VAL;
+	else
+		last_val_pwm = LGWVGA_BR_DEF_PANEL_PWM;
+
+	/* power control */
+	lcdc_lgwvga_pdata = pdev->dev.platform_data;
+	panel_power_gpio = lcdc_lgwvga_pdata->panel_config_gpio;
+
+	rc = lgwvga_init_panel();
+	if (rc)
+		printk(KERN_ERR "%s fail %d\n", __func__, rc);
+
+	display_sysfs_init();
+
+	return rc;
+}
+
+static struct platform_driver this_driver = {
+	.probe = lgwvga_probe,
+	.driver = {
+		.name = "lcdc_lg_wvga"
+	},
+};
+
+static int __init lgwvga_7x30_init(void)
+{
+	printk("PrimoC LG_WVGA LCDC DRIVER INIT");
 	int ret;
 	struct msm_panel_info *pinfo;
 
-	if (msm_fb_detect_client("lcdc_primo_wvga"))
+	if (msm_fb_detect_client("lcdc_lg_wvga"))
 		return 0;
 
 	ret = platform_driver_register(&this_driver);
@@ -778,7 +473,7 @@ static int __init primowvga_init(void)
 		return ret;
 	}
 
-	pinfo = &primowvga_panel_data.panel_info;
+	pinfo = &lgwvga_panel_data.panel_info;
 	pinfo->xres = 480;
 	pinfo->yres = 800;
 	pinfo->type = LCDC_PANEL;
@@ -786,13 +481,19 @@ static int __init primowvga_init(void)
 	pinfo->wait_cycle = 0;
 	pinfo->bpp = 18;
 	pinfo->fb_num = 2;
+	pinfo->clk_rate = 24576000;
 	pinfo->bl_max = 255;
 	pinfo->bl_min = 1;
-        
-        pinfo->clk_rate = 24576000;
-        pinfo->lcdc.border_clr = 0;
-        pinfo->lcdc.underflow_clr = 0xff;
-        pinfo->lcdc.hsync_skew = 0;
+
+	pinfo->lcdc.h_back_porch = 18;
+	pinfo->lcdc.h_front_porch = 20;
+	pinfo->lcdc.h_pulse_width = 2;
+	pinfo->lcdc.v_back_porch = 5;
+	pinfo->lcdc.v_front_porch = 4;
+	pinfo->lcdc.v_pulse_width = 2;
+	pinfo->lcdc.border_clr = 0;
+	pinfo->lcdc.underflow_clr = 0xff;
+	pinfo->lcdc.hsync_skew = 0;
 
 	ret = platform_device_register(&this_device);
 	if (ret) {
@@ -800,14 +501,13 @@ static int __init primowvga_init(void)
 			__func__);
 		platform_driver_unregister(&this_driver);
 	}
-
 	return ret;
 }
 
-static int __init primo_backlight_init(void)
+static int __init lgwvga_backlight_7x30_init(void)
 {
-	return platform_driver_register(&primo_backlight_driver);
+	return platform_driver_register(&lgwvga_backlight_driver);
 }
 
-device_initcall(primowvga_init);
-module_init(primo_backlight_init);
+device_initcall(lgwvga_7x30_init);
+module_init(lgwvga_backlight_7x30_init);
