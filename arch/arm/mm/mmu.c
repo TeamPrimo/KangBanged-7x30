@@ -789,7 +789,7 @@ static int __init early_vmalloc(char *arg)
 }
 early_param("vmalloc", early_vmalloc);
 
-static phys_addr_t lowmem_limit __initdata = 0;
+phys_addr_t lowmem_limit __initdata = 0;
 
 void __init sanity_check_meminfo(void)
 {
