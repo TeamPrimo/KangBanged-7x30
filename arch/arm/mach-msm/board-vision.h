@@ -58,9 +58,8 @@ extern struct platform_device msm_device_mddi0;
 #define MSM_FB_SIZE	0x500000
 
 #ifdef CONFIG_ION_MSM
-#define MSM_ION_AUDIO_SIZE  (MSM_PMEM_AUDIO_SIZE + PMEM_KERNEL_EBI0_SIZE)
 #define MSM_ION_SF_SIZE     MSM_PMEM_SF_SIZE
-#define MSM_ION_HEAP_NUM    4
+#define MSM_ION_HEAP_NUM    2
 #endif
 
 #define VISION_GPIO_WIFI_IRQ             147
