@@ -402,6 +402,7 @@ header-y += xfrm.h
 header-y += msm_audio_amrnb.h
 header-y += msm_audio.h
 header-y += msm_audio_qcp.h
+header-y += msm_ion.h
 header-y += msm_kgsl.h
 header-y += msm_mdp.h
 header-y += msm_rmnet.h
