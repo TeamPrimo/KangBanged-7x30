@@ -268,8 +268,8 @@ static void vid_enc_output_frame_done(struct video_client_ctx *client_ctx,
 		if (ion_flag == ION_FLAG_CACHED && buff_handle) {
 			msm_ion_do_cache_op(client_ctx->user_ion_client,
 				buff_handle,
-				(unsigned long *) NULL,
-				(unsigned long)venc_msg->venc_msg_info.buf.sz,
+				(unsigned long *) kernel_vaddr,
+				(unsigned long)venc_msg->venc_msg_info.buf.len,
 				ION_IOC_CLEAN_INV_CACHES);
 		}
 	}

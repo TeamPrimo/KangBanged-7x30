@@ -352,9 +352,8 @@ static void vid_dec_output_frame_done(struct video_client_ctx *client_ctx,
 				vcd_frame_data->alloc_len);
 			msm_ion_do_cache_op(client_ctx->user_ion_client,
 					buff_handle,
-					(unsigned long *) NULL,
-					(unsigned long)vcd_frame_data->\
-					alloc_len,
+					(unsigned long *) kernel_vaddr,
+					(unsigned long)vcd_frame_data->data_len,
 					ION_IOC_INV_CACHES);
 		}
 	}
