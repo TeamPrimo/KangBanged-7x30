@@ -1,4 +1,5 @@
-/* Copyright (c) 2009-2013, Code Aurora Forum. All rights reserved.
+/*
+ * Copyright (c) 2009-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -199,13 +200,14 @@ void mdp4_sw_reset(ulong bits)
 
 	bits &= 0x1f;	/* 5 bits */
 	outpdw(MDP_BASE + 0x001c, bits);	/* MDP_SW_RESET */
+	wmb();
 
 	while (inpdw(MDP_BASE + 0x001c) & bits) /* self clear when complete */
 		;
 	/* MDP cmd block disable */
 	mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_OFF, FALSE);
 
-	MSM_FB_DEBUG("mdp4_sw_reset: 0x%x\n", (int)bits);
+	pr_debug("mdp4_sw_reset: 0x%x\n", (int)bits);
 }
 
 void mdp4_overlay_cfg(int overlayer, int blt_mode, int refresh, int direct_out)
@@ -393,8 +395,6 @@ void mdp4_hw_init(void)
 	mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_ON, FALSE);
 	mdp_clk_ctrl(1);
 
-	mdp_bus_scale_update_request(5);
-
 #ifdef MDP4_ERROR
 	/*
 	 * Issue software reset on DMA_P will casue DMA_P dma engine stall
@@ -456,6 +456,11 @@ void mdp4_hw_init(void)
 
 	clk_rate = mdp_get_core_clk();
 	mdp4_fetch_cfg(clk_rate);
+
+	if (mdp_rev >= MDP_REV_42) {
+		/* MDP_LAYERMIXER_IN_CFG_UPDATE_METHOD */
+		outpdw(MDP_BASE + 0x100fc, 0x01);
+	}
 
 	/* Mark hardware as initialized. Only revisions > v2.1 have a register
 	 * for tracking core reset status. */
@@ -559,7 +564,7 @@ irqreturn_t mdp4_isr(int irq, void *ptr)
 			mdp4_dmap_done_dsi_cmd(0);
 #else
 		else { /* MDDI */
-			mdp4_dmap_done_mddi(0);
+			mdp4_dma_p_done_mddi(dma);
 			mdp_pipe_ctrl(MDP_DMA2_BLOCK,
 				MDP_BLOCK_POWER_OFF, TRUE);
 			complete(&dma->comp);
@@ -610,7 +615,7 @@ irqreturn_t mdp4_isr(int irq, void *ptr)
 				mdp4_overlay0_done_dsi_cmd(0);
 #else
 			if (panel & MDP4_PANEL_MDDI)
-				mdp4_overlay0_done_mddi(0);
+				mdp4_overlay0_done_mddi(dma);
 #endif
 		}
 		mdp_hw_cursor_done();
@@ -1387,6 +1392,14 @@ struct mdp_csc_cfg mdp_csc_convert[4] = {
 		{ 0x0, 0xff, 0x0, 0xff, 0x0, 0xff, },
 	},
 };
+
+void mdp4_vg_csc_restore(void)
+{
+        int i;
+
+        for (i = 0; i < CSC_MAX_BLOCKS; i++)
+                mdp4_csc_config(&csc_cfg_matrix[i]);
+}
 
 
 void mdp4_vg_csc_update(struct mdp_csc *p)
@@ -2282,7 +2295,7 @@ void mdp4_init_writeback_buf(struct msm_fb_data_type *mfd, u32 mix_num)
 u32 mdp4_allocate_writeback_buf(struct msm_fb_data_type *mfd, u32 mix_num)
 {
 	struct mdp_buf_type *buf;
-	ion_phys_addr_t	addr;
+	ion_phys_addr_t	addr, read_addr = 0;
 	size_t buffer_size;
 	unsigned long len;
 
@@ -2308,18 +2321,34 @@ u32 mdp4_allocate_writeback_buf(struct msm_fb_data_type *mfd, u32 mix_num)
 		buf->ihdl = ion_alloc(mfd->iclient, buffer_size, SZ_4K,
 			mfd->mem_hid, 0);
 		if (!IS_ERR_OR_NULL(buf->ihdl)) {
-			if (mfd->mem_hid & ION_SECURE) {
-				if (ion_phys(mfd->iclient, buf->ihdl,
-					&addr, (unsigned *)&len)) {
-					pr_err("%s:%d: ion_phys map failed\n",
-						 __func__, __LINE__);
+			if (mdp_iommu_split_domain) {
+				if (ion_map_iommu(mfd->iclient, buf->ihdl,
+					DISPLAY_READ_DOMAIN, GEN_POOL, SZ_4K,
+					0, &read_addr, &len, 0, 0)) {
+					pr_err("ion_map_iommu() read failed\n");
 					return -ENOMEM;
+				}
+				if (mfd->mem_hid & ION_SECURE) {
+					if (ion_phys(mfd->iclient, buf->ihdl,
+						&addr, (size_t *)&len)) {
+						pr_err("%s:%d: ion_phys map failed\n",
+							 __func__, __LINE__);
+						return -ENOMEM;
+					}
+				} else {
+					if (ion_map_iommu(mfd->iclient,
+						buf->ihdl, DISPLAY_WRITE_DOMAIN,
+						GEN_POOL, SZ_4K, 0, &addr, &len,
+						0, 0)) {
+						pr_err("ion_map_iommu() failed\n");
+						return -ENOMEM;
+					}
 				}
 			} else {
 				if (ion_map_iommu(mfd->iclient, buf->ihdl,
-					DISPLAY_WRITE_DOMAIN, GEN_POOL, SZ_4K,
+					DISPLAY_READ_DOMAIN, GEN_POOL, SZ_4K,
 					0, &addr, &len, 0, 0)) {
-					pr_err("ion_map_iommu() failed\n");
+					pr_err("ion_map_iommu() write failed\n");
 					return -ENOMEM;
 				}
 			}
@@ -2336,7 +2365,12 @@ u32 mdp4_allocate_writeback_buf(struct msm_fb_data_type *mfd, u32 mix_num)
 		pr_info("allocating %d bytes at %x for mdp writeback\n",
 			buffer_size, (u32) addr);
 		buf->write_addr = addr;
-		buf->read_addr = buf->write_addr;
+
+		if (read_addr)
+			buf->read_addr = read_addr;
+		else
+			buf->read_addr = buf->write_addr;
+
 		return 0;
 	} else {
 		pr_err("%s cannot allocate memory for mdp writeback!\n",
@@ -2356,9 +2390,16 @@ void mdp4_free_writeback_buf(struct msm_fb_data_type *mfd, u32 mix_num)
 
 	if (!IS_ERR_OR_NULL(mfd->iclient)) {
 		if (!IS_ERR_OR_NULL(buf->ihdl)) {
-			if (!(mfd->mem_hid & ION_SECURE))
+			if (mdp_iommu_split_domain) {
+				if (!(mfd->mem_hid & ION_SECURE))
+					ion_unmap_iommu(mfd->iclient, buf->ihdl,
+						DISPLAY_WRITE_DOMAIN, GEN_POOL);
 				ion_unmap_iommu(mfd->iclient, buf->ihdl,
-					DISPLAY_WRITE_DOMAIN, GEN_POOL);
+					DISPLAY_READ_DOMAIN, GEN_POOL);
+			} else {
+				ion_unmap_iommu(mfd->iclient, buf->ihdl,
+					DISPLAY_READ_DOMAIN, GEN_POOL);
+			}
 			ion_free(mfd->iclient, buf->ihdl);
 			buf->ihdl = NULL;
 			pr_info("%s:%d free ION writeback imem",
@@ -2367,7 +2408,7 @@ void mdp4_free_writeback_buf(struct msm_fb_data_type *mfd, u32 mix_num)
 	} else {
 		if (buf->write_addr) {
 			free_contiguous_memory_by_paddr(buf->write_addr);
-			pr_info("%s:%d free writeback pmem\n", __func__,
+			pr_debug("%s:%d free writeback pmem\n", __func__,
 				__LINE__);
 		}
 	}
@@ -3054,16 +3095,104 @@ int mdp4_qseed_cfg(struct mdp_qseed_cfg_data *config)
 error:
 	return ret;
 }
-u32 mdp4_get_mixer_num(u32 panel_type)
+
+static int is_valid_calib_addr(void *addr)
 {
-	u32 mixer_num;
-	if ((panel_type == TV_PANEL) ||
-			(panel_type == DTV_PANEL))
-		mixer_num = MDP4_MIXER1;
-	else if (panel_type == WRITEBACK_PANEL) {
-		mixer_num = MDP4_MIXER2;
-	} else {
-		mixer_num = MDP4_MIXER0;
+	int ret = 0;
+	unsigned int ptr;
+
+	if (addr == NULL)
+		goto end;
+
+	ptr = (unsigned int) addr;
+
+	if (mdp_rev >= MDP_REV_30 && mdp_rev < MDP_REV_40) {
+		/* if request is outside the MDP reg-map or is not aligned 4 */
+		if (ptr > 0xF0600 || ptr % 0x4)
+			goto end;
+
+		if (ptr >= 0x90000 && ptr < 0x94000) {
+			if (ptr == 0x90000 || ptr == 0x90070)
+				ret = 1;
+			else if (ptr >= 0x93400 && ptr <= 0x93420)
+				ret = 1;
+			else if (ptr >= 0x93500 && ptr <= 0x93508)
+				ret = 1;
+			else if (ptr >= 0x93580 && ptr <= 0x93588)
+				ret = 1;
+			else if (ptr >= 0x93600 && ptr <= 0x93614)
+				ret = 1;
+			else if (ptr >= 0x93680 && ptr <= 0x93694)
+				ret = 1;
+			else if (ptr >= 0x93800 && ptr <= 0x93BFC)
+				ret = 1;
+		}
+	} else if (mdp_rev >= MDP_REV_40 && mdp_rev <= MDP_REV_44) {
+		/* if request is outside the MDP reg-map or is not aligned 4 */
+		if (ptr > 0xF0600 || ptr % 0x4)
+			goto end;
+
+		if (ptr < 0x90000) {
+			if (ptr == 0x4 || ptr == 0x28200 || ptr == 0x28204)
+				ret = 1;
+		} else if (ptr < 0x95000) {
+			if (ptr == 0x90000 || ptr == 0x90070)
+				ret = 1;
+			else if (ptr >= 0x93400 && ptr <= 0x93420)
+				ret = 1;
+			else if (ptr >= 0x93500 && ptr <= 0x93508)
+				ret = 1;
+			else if (ptr >= 0x93580 && ptr <= 0x93588)
+				ret = 1;
+			else if (ptr >= 0x93600 && ptr <= 0x93614)
+				ret = 1;
+			else if (ptr >= 0x93680 && ptr <= 0x93694)
+				ret = 1;
+			else if (ptr >= 0x94800 && ptr <= 0x94BFC)
+				ret = 1;
+		} else if (ptr < 0x9A000) {
+			if (ptr >= 0x98800 && ptr <= 0x9883C)
+				ret = 1;
+			else if (ptr >= 0x98880 && ptr <= 0x988AC)
+				ret = 1;
+			else if (ptr >= 0x98900 && ptr <= 0x9893C)
+				ret = 1;
+			else if (ptr >= 0x98980 && ptr <= 0x989BC)
+				ret = 1;
+			else if (ptr >= 0x98A00 && ptr <= 0x98A3C)
+				ret = 1;
+			else if (ptr >= 0x98A80 && ptr <= 0x98ABC)
+				ret = 1;
+			else if (ptr >= 0x99000 && ptr <= 0x993FC)
+				ret = 1;
+			else if (ptr >= 0x99800 && ptr <= 0x99BFC)
+				ret = 1;
+		} else if (ptr >= 0x9A000 && ptr <= 0x9a08c) {
+			ret = 1;
+		}
 	}
-	return mixer_num;
+end:
+	return ret;
+}
+
+int mdp4_calib_config(struct mdp_calib_config_data *cfg)
+{
+	int ret = -1;
+	void *ptr = (void *) cfg->addr;
+
+	if (is_valid_calib_addr(ptr))
+		ret = 0;
+	else
+		return ret;
+
+	ptr = (void *)(((unsigned int) ptr) + MDP_BASE);
+	mdp_clk_ctrl(1);
+	if (cfg->ops & MDP_PP_OPS_READ) {
+		cfg->data = inpdw(ptr);
+		ret = 1;
+	} else if (cfg->ops & MDP_PP_OPS_WRITE) {
+		outpdw(ptr, cfg->data);
+	}
+	mdp_clk_ctrl(0);
+	return ret;
 }
