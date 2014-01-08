@@ -1281,7 +1281,6 @@ static int msm_fb_register(struct msm_fb_data_type *mfd)
 	struct fb_fix_screeninfo *fix;
 	struct fb_var_screeninfo *var;
 	int *id;
-	int fbram_offset;
 	int remainder, remainder_mode2;
 
 	/*
@@ -1539,13 +1538,7 @@ static int msm_fb_register(struct msm_fb_data_type *mfd)
 		return -ENOMEM;
 	}
 
-	if (fbram) {
-		fbram_offset = PAGE_ALIGN((int)fbram)-(int)fbram;
-		fbram += fbram_offset;
-		fbram_phys += fbram_offset;
-		fbram_size -= fbram_offset;
-	} else
-		fbram_offset = 0;
+	BUG_ON(!IS_ALIGNED((unsigned long)fbram, PAGE_SIZE));
 
 	if ((!bf_supported || mfd->index == 0) && fbram)
 		if (fbram_size < fix->smem_len) {
@@ -1629,12 +1622,6 @@ static int msm_fb_register(struct msm_fb_data_type *mfd)
 
 		mfd->op_enable = FALSE;
 		return -EPERM;
-	}
-
-	if (fbram) {
-		fbram += fix->smem_len;
-		fbram_phys += fix->smem_len;
-		fbram_size -= fix->smem_len;
 	}
 
 	MSM_FB_INFO
