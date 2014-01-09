@@ -41,9 +41,6 @@ extern struct platform_device msm_device_mddi0;
 #define MSM_LINUX_BASE2		0x20000000
 #define MSM_LINUX_SIZE2		0x10000000
 
-#define MSM_GPU_MEM_BASE	0x00100000
-#define MSM_GPU_MEM_SIZE	0x00300000
-
 #define MSM_RAM_CONSOLE_BASE	0x00500000
 #define MSM_RAM_CONSOLE_SIZE	0x00100000
 
@@ -55,7 +52,7 @@ extern struct platform_device msm_device_mddi0;
 
 #define MSM_PMEM_SF_SIZE	0x01F00000
 
-#define MSM_FB_SIZE	0x500000
+#define MSM_FB_SIZE    roundup((800 * ALIGN(480, 32) * 4 * 3), 4096) /* 4 bpp x 3 pages, Note: must be multiple of 4096 */
 
 #ifdef CONFIG_ION_MSM
 #define MSM_ION_CAMERA_SIZE     0x018A0000
