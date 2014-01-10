@@ -34,25 +34,26 @@
 #define MSM_RAM_CONSOLE_SIZE	0x00100000
 
 //#define MSM_PMEM_ADSP_BASE      0x2B900000
-#define MSM_PMEM_ADSP_SIZE      0x03600000
+#define MSM_PMEM_ADSP_SIZE      0x01E00000
 
 //#define PMEM_KERNEL_EBI0_BASE   0x2D600000
-#define PMEM_KERNEL_EBI0_SIZE   0x00700000
+#define PMEM_KERNEL_EBI0_SIZE   0x00500000
 #define MSM_PMEM_SF_SIZE 	0x02000000
 #define MSM_PMEM_AUDIO_SIZE 	0x00000000
 
 //#define MSM_PMEM_CAMERA_BASE 	0x2DD00000
 //#define MSM_PMEM_CAMERA_SIZE 	0x00C00000
 
-//#define MSM_PMEM_MDP_BASE	0x2DD00000
-//#define MSM_PMEM_MDP_SIZE	0x02000000
+//#define MSM_PMEM_MDP_BASE		0x2DD00000
+//#define MSM_PMEM_MDP_SIZE		0x02000000
 
-#define MSM_FB_BASE		0x2FD00000
-#define MSM_FB_SIZE		roundup((800 * ALIGN(480, 32) * 4 * 3), 4096) /* 4 bpp x 3 pages, Note: must be multiple of 4096 */
+#define MSM_FB_BASE				0x2FD00000
+#define MSM_FB_SIZE    roundup((800 * ALIGN(480, 32) * 4 * 3), 4096) /* 4 bpp x 3 pages, Note: must be multiple of 4096 */
 
 #ifdef CONFIG_ION_MSM
+#define MSM_ION_CAMERA_SIZE     0x018A0000
 #define MSM_ION_SF_SIZE     MSM_PMEM_SF_SIZE
-#define MSM_ION_HEAP_NUM    2
+#define MSM_ION_HEAP_NUM    3
 #endif
 
 /* GPIO definition */
