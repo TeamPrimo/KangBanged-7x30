@@ -542,7 +542,7 @@ static int pm8058_gpios_init(void)
 			.function       = PM_GPIO_FUNC_NORMAL,
 		}
 	};
-�*/
+*/
 #ifdef CONFIG_MMC_MSM_CARD_HW_DETECTION
 	struct pm8xxx_gpio_init_info sdcc_det = {
 		PM8058_GPIO_PM_TO_SYS(SAGA_SDMC_CD_N),
@@ -5561,7 +5561,7 @@ static int msm7x30_paddr_to_memtype(unsigned int paddr)
 	if (paddr < 0x40000000)
 		return MEMTYPE_EBI0;
 	if (paddr >= 0x40000000 && paddr < 0x80000000)
-		return MEMTYPE_EBI0;
+		return MEMTYPE_EBI1;
 	return MEMTYPE_NONE;
 }
 
