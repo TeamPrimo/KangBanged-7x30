@@ -252,6 +252,12 @@ static void vid_enc_output_frame_done(struct video_client_ctx *client_ctx,
 		/* Timestamp pass-through from input frame */
 		venc_msg->venc_msg_info.buf.timestamp =
 			vcd_frame_data->time_stamp;
+		/* Metadata length */
+		venc_msg->venc_msg_info.buf.metadata_len =
+			vcd_frame_data->metadata_len;
+		/* Metadata offset */
+		venc_msg->venc_msg_info.buf.metadata_offset =
+			vcd_frame_data->metadata_offset;
 
 		/* Decoded picture width and height */
 		venc_msg->venc_msg_info.msgdata_size =
