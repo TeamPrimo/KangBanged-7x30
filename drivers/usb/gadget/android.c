@@ -169,6 +169,7 @@ struct android_dev {
 	struct android_usb_platform_data *pdata;
 
 	bool enabled;
+	struct mutex mutex;
 	bool connected;
 	bool sw_connected;
 	struct work_struct work;
@@ -1773,7 +1774,6 @@ functions_show(struct device *pdev, struct device_attribute *attr, char *buf)
 	return buff - buf;
 }
 
-/* TODO: replace by switch function and enable function */
 static ssize_t
 functions_store(struct device *pdev, struct device_attribute *attr,
 			       const char *buff, size_t size)
@@ -1783,8 +1783,12 @@ functions_store(struct device *pdev, struct device_attribute *attr,
 	char buf[256], *b;
 	int err;
 
-	pr_info("%s: buff: %s\n", __func__, buff);
-	return size;
+	mutex_lock(&dev->mutex);
+
+	if (dev->enabled) {
+		mutex_unlock(&dev->mutex);
+		return -EBUSY;
+	}
 
 	INIT_LIST_HEAD(&dev->enabled_functions);
 
@@ -1799,6 +1803,8 @@ functions_store(struct device *pdev, struct device_attribute *attr,
 				pr_err("android_usb: Cannot enable '%s'", name);
 		}
 	}
+
+	mutex_unlock(&dev->mutex);
 
 	return size;
 }
@@ -1817,17 +1823,9 @@ static ssize_t enable_store(struct device *pdev, struct device_attribute *attr,
 	struct usb_composite_dev *cdev = dev->cdev;
 	int enabled = 0;
 
+	mutex_lock(&dev->mutex);
+
 	sscanf(buff, "%d", &enabled);
-
-	if (enabled)
-		htc_usb_enable_function("adb", 1);
-
-	pr_info("%s, buff: %s\n", __func__, buff);
-
-	/* temporaily return immediately to prevent framework change usb behavior
-	 */
-	return size;
-
 	if (enabled && !dev->enabled) {
 		/* update values in composite driver's copy of device descriptor */
 		cdev->desc.idVendor = device_desc.idVendor;
@@ -1850,6 +1848,8 @@ static ssize_t enable_store(struct device *pdev, struct device_attribute *attr,
 		pr_err("android_usb: already %s\n",
 				dev->enabled ? "enabled" : "disabled");
 	}
+
+	mutex_unlock(&dev->mutex);
 	return size;
 }
 
@@ -2069,101 +2069,6 @@ static struct usb_composite_driver android_usb_driver = {
 	.unbind		= android_usb_unbind,
 };
 
-#ifdef CONFIG_USB_ANDROID_USBNET
-static struct work_struct reenumeration_work;
-static void do_reenumeration_work(struct work_struct *w)
-{
-	struct android_dev *dev = _android_dev;
-	int err, funcs, product_id;
-
-	if (dev->enabled != true) {
-		pr_info("%s: USB driver is not initialize\n", __func__);
-		return;
-	}
-
-	mutex_lock(&function_bind_sem);
-
-	funcs = htc_usb_get_func_combine_value();
-	usb_gadget_disconnect(dev->cdev->gadget);
-	usb_remove_config(dev->cdev, &android_config_driver);
-
-	INIT_LIST_HEAD(&dev->enabled_functions);
-
-	if (funcs & (1 << USB_FUNCTION_ADB)) {
-		err = android_enable_function(dev, "adb");
-		if (err)
-			pr_err("android_usb: Cannot enable '%s'", "adb");
-	}
-
-	err = android_enable_function(dev, "usbnet");
-	if (err)
-		pr_err("android_usb: Cannot enable '%s'", "usbnet");
-
-	product_id = get_product_id(dev, &dev->enabled_functions);
-
-	device_desc.idProduct = __constant_cpu_to_le16(product_id);
-	dev->cdev->desc.idProduct = device_desc.idProduct;
-	printk(KERN_INFO "%s:product_id = 0x%04x\n", __func__, product_id);
-
-	usb_add_config(dev->cdev, &android_config_driver, android_bind_config);
-	mdelay(100);
-	usb_gadget_connect(dev->cdev->gadget);
-	dev->enabled = true;
-
-	mutex_unlock(&function_bind_sem);
-}
-
-static int handle_mode_switch(u16 switchIndex, struct usb_composite_dev *cdev)
-{
-	switch (switchIndex) {
-	case 0x1F:
-		/* Enable the USBNet function and disable all others but adb */
-		printk(KERN_INFO "[USBNET] %s: 0x%02x\n", __func__, switchIndex);
-		cdev->desc.bDeviceClass = USB_CLASS_COMM;
-		break;
-		/* Add other switch functions */
-	default:
-		return -EOPNOTSUPP;
-	}
-	return 0;
-}
-
-static int android_switch_setup(struct usb_gadget *gadget,
-		const struct usb_ctrlrequest *c)
-{
-	int value = -EOPNOTSUPP;
-	u16 wIndex = le16_to_cpu(c->wIndex);
-	u16 wValue = le16_to_cpu(c->wValue);
-	u16 wLength = le16_to_cpu(c->wLength);
-	struct usb_composite_dev *cdev = get_gadget_data(gadget);
-	struct usb_request *req = cdev->req;
-	/* struct android_dev *dev = _android_dev; */
-
-	switch (c->bRequestType & USB_TYPE_MASK) {
-	case USB_TYPE_VENDOR:
-		/* If the request is a mode switch , handle it */
-		if ((c->bRequest == 1) && (wValue == 0) && (wLength == 0)) {
-			value = handle_mode_switch(wIndex, cdev);
-			if (value != 0)
-				return value;
-
-			req->zero = 0;
-			req->length = value;
-			if (usb_ep_queue(cdev->gadget->ep0, req, GFP_ATOMIC))
-				printk(KERN_ERR "ep0 in queue failed\n");
-
-			/* force reenumeration */
-			schedule_work(&reenumeration_work);
-		}
-		break;
-		/* Add Other type of requests here */
-	default:
-		break;
-	}
-	return value;
-}
-#endif
-
 static int
 android_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *c)
 {
@@ -2178,12 +2083,6 @@ android_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *c)
 	req->complete = composite_setup_complete;
 	req->length = 0;
 	gadget->ep0->driver_data = cdev;
-
-#ifdef CONFIG_USB_ANDROID_USBNET
-	value = android_switch_setup(gadget, c);
-	if (value >= 0)
-		return value;
-#endif
 
 	list_for_each_entry(f, &dev->enabled_functions, enabled_list) {
 		if (f->ctrlrequest) {
@@ -2384,9 +2283,7 @@ static int __init init(void)
 	INIT_LIST_HEAD(&dev->enabled_functions);
 	INIT_WORK(&dev->work, android_work);
 	INIT_DELAYED_WORK(&dev->init_work, android_usb_init_work);
-#ifdef CONFIG_USB_ANDROID_USBNET
-	INIT_WORK(&reenumeration_work, do_reenumeration_work);
-#endif
+	mutex_init(&dev->mutex);
 
 	ret = android_create_device(dev);
 	if (ret) {
