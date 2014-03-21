@@ -2979,15 +2979,14 @@ static void __init msm7x30_init_mmc(void)
 	msm_add_sdcc(2, &msm7x30_sdc2_data);
 #endif
 #ifdef CONFIG_MMC_MSM_SDC3_SUPPORT
-	sdcc_vreg_data[2].vreg_data = vreg_s3;
-	sdcc_vreg_data[2].level = 1800;
-/* HTC_WIFI_START */
-	/*
-	msm_sdcc_setup_gpio(3, 1);
-	msm_add_sdcc(3, &msm7x30_sdc3_data);
-	*/
-	vision_init_mmc(system_rev);
-/* HTC_WIFI_END*/
+/*HTC_WIFI_START*/
+/*
+        sdcc_vreg_data[2].vreg_data = vreg_s3;
+        sdcc_vreg_data[2].level = 1800;
+        msm_sdcc_setup_gpio(3, 1);
+        msm_add_sdcc(3, &msm7x30_sdc3_data);
+        * */
+/*HTC_WIFI_END*/
 #endif
 #ifdef CONFIG_MMC_MSM_SDC4_SUPPORT
 	sdcc_vreg_data[3].vreg_data = vreg_mmc;
@@ -3174,6 +3173,7 @@ static struct platform_device *devices[] __initdata = {
 static void __init vision_init(void)
 {
 	int rc = 0;
+        int ret = 0;
 	struct kobject *properties_kobj;
 	unsigned smem_size;
 	uint32_t soc_version = 0;
@@ -3234,6 +3234,11 @@ static void __init vision_init(void)
 #ifdef CONFIG_USB_EHCI_MSM_72K
 	msm_add_host(0, &msm_usb_host_pdata);
 #endif
+
+        ret = vision_init_mmc(system_rev);
+        if (ret != 0)
+                pr_crit("%s: Unable to initialize MMC\n", __func__);
+
 	msm7x30_init_mmc();
 	msm_qsd_spi_init();
 

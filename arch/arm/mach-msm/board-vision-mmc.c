@@ -302,13 +302,11 @@ int __init vision_init_mmc(unsigned int sys_rev)
 
 	printk(KERN_INFO "vision: %s\n", __func__);
 	/* SDC2: MoviNAND */
-	/*
+#if 0
 	register_msm_irq_mask(INT_SDC2_0);
 	register_msm_irq_mask(INT_SDC2_1);
-	*/
 	config_gpio_table(movinand_on_gpio_table,
 			  ARRAY_SIZE(movinand_on_gpio_table));
-#if 0
 	msm_add_sdcc(2, &vision_movinand_data, 0, 0);
 #endif
 
